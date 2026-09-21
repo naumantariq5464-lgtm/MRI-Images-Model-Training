@@ -1,0 +1,19 @@
+# Environments
+venv/
+env/
+__pycache__/
+*.pyc
+
+# Dataset and heavy outputs
+dataset/
+outputs/
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Frontend is ignored here because it has its own .gitignore and node_modules inside it
+# Wait, let's explicitly ignore node_modules just in case
+node_modules/
+dist/
+.env
