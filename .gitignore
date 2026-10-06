@@ -16,4 +16,8 @@ Thumbs.db
 # Wait, let's explicitly ignore node_modules just in case
 node_modules/
 dist/
-.env
+# Docker
+Dockerfile
+.dockerignore
+requirements-docker.txt
+
