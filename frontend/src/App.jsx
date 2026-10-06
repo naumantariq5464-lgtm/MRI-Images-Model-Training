@@ -87,7 +87,15 @@ function App() {
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
-  const isTumor = result?.prediction === 'Pituitary Tumor'
+  // Determine tumor type for styling
+  const getTumorType = () => {
+    if (!result) return 'none'
+    if (result.prediction === 'Pituitary Tumor') return 'pituitary'
+    if (result.prediction === 'Glioma Tumor') return 'glioma'
+    return 'no-tumor'
+  }
+
+  const isTumor = result?.prediction !== 'No Tumor' && result !== null
 
   return (
     <div className="app-container">
@@ -95,7 +103,7 @@ function App() {
       <header className="header">
         <div className="header-logo">
           <div className="logo-icon">N</div>
-          <h1>NeuroScan AI <span>v1.0</span></h1>
+          <h1>NeuroScan AI <span>v2.0</span></h1>
         </div>
         <div className="header-status">
           <div className="status-dot"></div>
@@ -106,7 +114,7 @@ function App() {
       {/* ---- Main Content ---- */}
       <main className="main-content">
         <div className="section-title">
-          <h2>Pituitary Tumor Detection</h2>
+          <h2>Brain Tumor MRI Scanner</h2>
           <p>Upload an MRI scan for AI-powered diagnosis with Grad-CAM explainability</p>
         </div>
 
@@ -183,7 +191,7 @@ function App() {
             <div className="result-card">
               <div className="result-header">
                 <div className="result-label-group">
-                  <div className={`result-badge ${isTumor ? 'tumor' : 'no-tumor'}`}>
+                  <div className={`result-badge ${isTumor ? 'tumor' : 'no-tumor'} ${getTumorType()}`}>
                     <span className="badge-icon">{isTumor ? '!' : '✓'}</span>
                     {result.prediction}
                   </div>
@@ -203,7 +211,7 @@ function App() {
               <div className="confidence-bar-container">
                 <div className="confidence-bar-bg">
                   <div
-                    className={`confidence-bar-fill ${isTumor ? 'tumor' : 'no-tumor'}`}
+                    className={`confidence-bar-fill ${isTumor ? 'tumor' : 'no-tumor'} ${getTumorType()}`}
                     style={{ width: `${result.confidence * 100}%` }}
                   ></div>
                 </div>
@@ -212,7 +220,7 @@ function App() {
               {/* Metrics */}
               <div className="metrics-grid">
                 <div className="metric-item">
-                  <div className="metric-value">{result.prediction === 'Pituitary Tumor' ? 'Positive' : 'Negative'}</div>
+                  <div className="metric-value">{isTumor ? 'Positive' : 'Negative'}</div>
                   <div className="metric-label">Detection</div>
                 </div>
                 <div className="metric-item">
@@ -257,7 +265,7 @@ function App() {
 
       {/* ---- Footer ---- */}
       <footer className="footer">
-        <span>NeuroScan AI</span> — Pituitary Tumor Detection with Explainable AI | MobileNetV2 + Grad-CAM
+        <span>NeuroScan AI</span> — Brain Tumor MRI Scanner with Explainable AI | MobileNetV2 + Grad-CAM
       </footer>
     </div>
   )

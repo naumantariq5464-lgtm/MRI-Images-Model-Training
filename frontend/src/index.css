@@ -1,5 +1,5 @@
 /* ============================================
-   Pituitary Tumor AI - Black & White Theme
+   NeuroScan AI - Brain Tumor MRI Scanner
    Premium Medical AI Dashboard
    ============================================ */
 
@@ -20,6 +20,7 @@
   --accent-white: #ffffff;
   --accent-danger: #ff4444;
   --accent-success: #44ff88;
+  --accent-glioma: #ff8c00;
   --accent-warn: #ffaa44;
   --shadow-glow: 0 0 40px rgba(255, 255, 255, 0.03);
   --shadow-card: 0 4px 24px rgba(0, 0, 0, 0.5);
@@ -381,6 +382,12 @@ body {
   border: 1px solid rgba(255, 68, 68, 0.2);
 }
 
+.result-badge.tumor.glioma {
+  background: rgba(255, 140, 0, 0.12);
+  color: var(--accent-glioma);
+  border: 1px solid rgba(255, 140, 0, 0.25);
+}
+
 .result-badge.no-tumor {
   background: rgba(68, 255, 136, 0.12);
   color: var(--accent-success);
@@ -437,6 +444,10 @@ body {
 
 .confidence-bar-fill.tumor {
   background: linear-gradient(90deg, #ff4444, #ff8888);
+}
+
+.confidence-bar-fill.tumor.glioma {
+  background: linear-gradient(90deg, #ff8c00, #ffb347);
 }
 
 .confidence-bar-fill.no-tumor {

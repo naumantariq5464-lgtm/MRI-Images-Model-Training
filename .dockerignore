@@ -1,0 +1,10 @@
+# Docker in files ko container mein copy nahi karega (taake image size chota rahay)
+venv/
+__pycache__/
+*.pyc
+dataset/
+outputs/
+frontend/
+.git/
+.gitignore
+README.md

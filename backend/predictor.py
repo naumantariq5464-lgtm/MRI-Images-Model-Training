@@ -1,6 +1,7 @@
 """
-predictor.py - Core AI Engine
-Handles model loading, MRI prediction, and Grad-CAM heatmap generation.
+predictor.py - Core AI Engine (Unified Multi-Model)
+Handles loading of both Pituitary and Glioma models,
+runs unified prediction, and generates Grad-CAM heatmaps.
 """
 
 import io
@@ -8,38 +9,51 @@ import base64
 from pathlib import Path
 import numpy as np
 import cv2
-import matplotlib
-matplotlib.use("Agg")  # Non-interactive backend for server
-import matplotlib.pyplot as plt
 import tensorflow as tf
 
 # -----------------------------------------------------------
 # Configuration
 # -----------------------------------------------------------
 BASE_DIR = Path(__file__).resolve().parent.parent
-MODEL_PATH = BASE_DIR / "models" / "pituitary_model.keras"
+PITUITARY_MODEL_PATH = BASE_DIR / "models" / "pituitary_model.keras"
+GLIOMA_MODEL_PATH = BASE_DIR / "models" / "glioma_model.keras"
 IMG_SIZE = (224, 224)
 
 # -----------------------------------------------------------
 # Global State (loaded once at startup)
 # -----------------------------------------------------------
-_model = None
-_gradcam_model = None
+_pituitary_model = None
+_glioma_model = None
+_pituitary_gradcam = None
+_glioma_gradcam = None
 
 
 def load_model():
-    """Load trained Keras model and build Grad-CAM model. Called once at startup."""
-    global _model, _gradcam_model
+    """Load both trained Keras models and build Grad-CAM models. Called once at startup."""
+    global _pituitary_model, _glioma_model, _pituitary_gradcam, _glioma_gradcam
 
-    if not MODEL_PATH.exists():
-        raise FileNotFoundError(f"Trained model not found at: {MODEL_PATH}")
+    # Load Pituitary Model
+    if PITUITARY_MODEL_PATH.exists():
+        print(f"[Predictor] Loading Pituitary model from {PITUITARY_MODEL_PATH}...")
+        _pituitary_model = tf.keras.models.load_model(str(PITUITARY_MODEL_PATH))
+        _pituitary_gradcam = _build_gradcam_model(_pituitary_model)
+        print("[Predictor] Pituitary model + Grad-CAM loaded.")
+    else:
+        print(f"[Predictor] WARNING: Pituitary model not found at {PITUITARY_MODEL_PATH}")
 
-    print(f"[Predictor] Loading model from {MODEL_PATH}...")
-    _model = tf.keras.models.load_model(str(MODEL_PATH))
+    # Load Glioma Model
+    if GLIOMA_MODEL_PATH.exists():
+        print(f"[Predictor] Loading Glioma model from {GLIOMA_MODEL_PATH}...")
+        _glioma_model = tf.keras.models.load_model(str(GLIOMA_MODEL_PATH))
+        _glioma_gradcam = _build_gradcam_model(_glioma_model)
+        print("[Predictor] Glioma model + Grad-CAM loaded.")
+    else:
+        print(f"[Predictor] WARNING: Glioma model not found at {GLIOMA_MODEL_PATH}")
 
-    # Build Grad-CAM model
-    _gradcam_model = _build_gradcam_model(_model)
-    print("[Predictor] Model and Grad-CAM engine loaded successfully.")
+    if _pituitary_model is None and _glioma_model is None:
+        raise FileNotFoundError("No models found! At least one model is required.")
+
+    print("[Predictor] All available models loaded successfully.")
 
 
 def _build_gradcam_model(model):
@@ -72,6 +86,47 @@ def _build_gradcam_model(model):
     return tf.keras.Model(inputs=inputs, outputs=[conv_output, predictions])
 
 
+def _validate_mri_image(img_bgr: np.ndarray):
+    """
+    Validates if an uploaded image is a valid Brain MRI scan vs a non-MRI photo.
+    Checks:
+      1. Grayscale / Color Saturation: MRI scans are monochrome (low saturation & channel variance).
+      2. Background Darkness: MRI scans have dark background borders.
+    Raises ValueError with descriptive message if non-MRI image detected.
+    """
+    if img_bgr is None:
+        raise ValueError("Could not decode the uploaded image. Please upload a valid image file (JPG/PNG).")
+
+    # 1. Color Saturation & Channel Difference Check (MRI is grayscale)
+    hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
+    mean_saturation = float(np.mean(hsv[:, :, 1]))
+
+    b, g, r = cv2.split(img_bgr.astype(np.float32))
+    channel_diff = float(np.mean(np.abs(r - g) + np.abs(g - b) + np.abs(b - r)))
+
+    if mean_saturation > 25.0 or channel_diff > 15.0:
+        raise ValueError("Invalid Image: Uploaded file is not a valid Brain MRI scan. Brain MRI scans must be grayscale images.")
+
+    # 2. Dark Background Border Check (MRI scans have dark border surroundings)
+    h, w = img_bgr.shape[:2]
+    gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
+
+    corner_top_left = gray[0:int(h * 0.08), 0:int(w * 0.08)]
+    corner_top_right = gray[0:int(h * 0.08), int(w * 0.92):w]
+    corner_bot_left = gray[int(h * 0.92):h, 0:int(w * 0.08)]
+    corner_bot_right = gray[int(h * 0.92):h, int(w * 0.92):w]
+
+    corner_avg = float(np.mean([
+        np.mean(corner_top_left),
+        np.mean(corner_top_right),
+        np.mean(corner_bot_left),
+        np.mean(corner_bot_right)
+    ]))
+
+    if corner_avg > 90.0:
+        raise ValueError("Invalid Image: Uploaded file does not match Brain MRI characteristics (bright background detected). Please upload a valid Brain MRI scan.")
+
+
 def preprocess_image(image_bytes: bytes) -> tuple:
     """
     Converts raw uploaded image bytes into:
@@ -85,6 +140,9 @@ def preprocess_image(image_bytes: bytes) -> tuple:
     if img_bgr is None:
         raise ValueError("Could not decode the uploaded image. Please upload a valid MRI image (JPG/PNG).")
 
+    # Validate image is a valid Brain MRI scan
+    _validate_mri_image(img_bgr)
+
     img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
     img_resized = cv2.resize(img_rgb, IMG_SIZE)
     img_tensor = tf.expand_dims(tf.cast(img_resized, tf.float32), axis=0)
@@ -92,46 +150,85 @@ def preprocess_image(image_bytes: bytes) -> tuple:
     return img_tensor, img_bgr, img_rgb
 
 
+
 def predict(image_bytes: bytes) -> dict:
     """
-    Main prediction pipeline:
+    Unified prediction pipeline:
       1. Preprocess uploaded MRI image
-      2. Run model inference
-      3. Generate Grad-CAM heatmap
-      4. Create side-by-side visualization
-      5. Return prediction result with base64-encoded Grad-CAM image
+      2. Run BOTH models (Pituitary & Glioma)
+      3. Determine the best prediction across all models
+      4. Generate Grad-CAM heatmap from the winning model
+      5. Return unified result
     """
-    if _model is None or _gradcam_model is None:
-        raise RuntimeError("Model not loaded. Server may still be starting up.")
+    if _pituitary_model is None and _glioma_model is None:
+        raise RuntimeError("No models loaded. Server may still be starting up.")
 
     # 1. Preprocess
     img_tensor, img_bgr, img_rgb = preprocess_image(image_bytes)
 
-    # 2. Grad-CAM + Prediction (single forward pass with gradient tape)
-    heatmap, pred_score = _compute_gradcam(img_tensor)
+    # 2. Run both models and collect tumor scores
+    results = []
 
-    # 3. Determine label and confidence
-    is_tumor = float(pred_score) >= 0.5
-    confidence = float(pred_score) if is_tumor else float(1.0 - pred_score)
-    label = "Pituitary Tumor" if is_tumor else "No Tumor"
+    # Pituitary Model: score >= 0.5 means Pituitary Tumor
+    if _pituitary_model is not None and _pituitary_gradcam is not None:
+        pit_heatmap, pit_score = _compute_gradcam(img_tensor, _pituitary_gradcam)
+        pit_tumor_conf = float(pit_score)  # Higher = more likely Pituitary Tumor
+        results.append({
+            "label": "Pituitary Tumor",
+            "tumor_confidence": pit_tumor_conf,
+            "heatmap": pit_heatmap,
+            "gradcam_model": _pituitary_gradcam
+        })
 
-    # 4. Generate visualization
+    # Glioma Model: score >= 0.5 means Glioma Tumor
+    if _glioma_model is not None and _glioma_gradcam is not None:
+        gli_heatmap, gli_score = _compute_gradcam(img_tensor, _glioma_gradcam)
+        gli_tumor_conf = float(gli_score)  # Higher = more likely Glioma Tumor
+        results.append({
+            "label": "Glioma Tumor",
+            "tumor_confidence": gli_tumor_conf,
+            "heatmap": gli_heatmap,
+            "gradcam_model": _glioma_gradcam
+        })
+
+    # 3. Decision Logic:
+    #    - If BOTH models say "No Tumor" (scores < 0.5), result = "No Tumor"
+    #    - If one or both models say "Tumor" (score >= 0.5), pick the one with highest confidence
+    tumor_detections = [r for r in results if r["tumor_confidence"] >= 0.5]
+
+    if len(tumor_detections) == 0:
+        # No tumor detected by any model
+        # Use the model with the LOWEST tumor score (most confident "No Tumor")
+        best = min(results, key=lambda r: r["tumor_confidence"])
+        label = "No Tumor"
+        confidence = float(1.0 - best["tumor_confidence"])
+        raw_score = best["tumor_confidence"]
+        heatmap = best["heatmap"]
+    else:
+        # One or more models detected tumor — pick the most confident one
+        best = max(tumor_detections, key=lambda r: r["tumor_confidence"])
+        label = best["label"]
+        confidence = best["tumor_confidence"]
+        raw_score = best["tumor_confidence"]
+        heatmap = best["heatmap"]
+
+    # 4. Generate visualization using the winning model's heatmap
     gradcam_base64 = _create_visualization(img_bgr, img_rgb, heatmap, label, confidence)
 
     return {
         "prediction": label,
         "confidence": round(confidence, 4),
         "confidence_percent": f"{confidence * 100:.2f}%",
-        "raw_score": round(float(pred_score), 4),
+        "raw_score": round(raw_score, 4),
         "gradcam_image": gradcam_base64
     }
 
 
-def _compute_gradcam(img_tensor) -> tuple:
-    """Computes Grad-CAM heatmap using gradient tape."""
+def _compute_gradcam(img_tensor, gradcam_model) -> tuple:
+    """Computes Grad-CAM heatmap using gradient tape for a given model."""
     with tf.GradientTape() as tape:
         tape.watch(img_tensor)
-        conv_outputs, predictions = _gradcam_model(img_tensor)
+        conv_outputs, predictions = gradcam_model(img_tensor)
         loss = predictions[:, 0]
 
     # Gradient of prediction w.r.t. last conv layer feature maps
@@ -158,7 +255,7 @@ def _compute_gradcam(img_tensor) -> tuple:
 
 def _create_visualization(img_bgr, img_rgb, heatmap, label, confidence) -> str:
     """
-    Creates a 3-panel side-by-side visualization:
+    Creates a 3-panel side-by-side visualization using OpenCV:
       Panel 1: Original MRI
       Panel 2: Grad-CAM Heatmap
       Panel 3: Superimposed Overlay
@@ -170,43 +267,40 @@ def _create_visualization(img_bgr, img_rgb, heatmap, label, confidence) -> str:
 
     # Apply JET colormap
     colored_heatmap = cv2.applyColorMap(heatmap_uint8, cv2.COLORMAP_JET)
-    colored_heatmap_rgb = cv2.cvtColor(colored_heatmap, cv2.COLOR_BGR2RGB)
 
     # Superimpose heatmap onto original
     superimposed = cv2.addWeighted(img_bgr, 0.5, colored_heatmap, 0.5, 0)
-    superimposed_rgb = cv2.cvtColor(superimposed, cv2.COLOR_BGR2RGB)
 
-    # Determine color scheme
-    color = "red" if label == "Pituitary Tumor" else "green"
+    # Create a simple concatenated image (Panel 1 | Panel 2 | Panel 3)
+    # Using BGR for cv2.imencode
+    border_size = 5
+    border_color = [255, 255, 255] # White border
+    
+    p1 = cv2.copyMakeBorder(img_bgr, border_size, border_size, border_size, border_size, cv2.BORDER_CONSTANT, value=border_color)
+    p2 = cv2.copyMakeBorder(colored_heatmap, border_size, border_size, border_size, border_size, cv2.BORDER_CONSTANT, value=border_color)
+    p3 = cv2.copyMakeBorder(superimposed, border_size, border_size, border_size, border_size, cv2.BORDER_CONSTANT, value=border_color)
 
-    # Draw 3-panel figure
-    fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+    combined = cv2.hconcat([p1, p2, p3])
+    
+    # Add a top bar for title
+    top_bar = 50
+    final_img = cv2.copyMakeBorder(combined, top_bar, 0, 0, 0, cv2.BORDER_CONSTANT, value=[0, 0, 0])
+    
+    # Color based on tumor type
+    if label == "No Tumor":
+        color = (0, 255, 0)   # Green (BGR)
+    elif label == "Pituitary Tumor":
+        color = (0, 0, 255)   # Red (BGR)
+    elif label == "Glioma Tumor":
+        color = (0, 140, 255) # Orange (BGR)
+    else:
+        color = (255, 255, 255)
 
-    axes[0].imshow(img_rgb)
-    axes[0].set_title("Original MRI", fontsize=13, fontweight="bold")
-    axes[0].axis("off")
+    title_text = f"AI Diagnosis: {label} | Confidence: {confidence * 100:.2f}%"
+    cv2.putText(final_img, title_text, (20, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.9, color, 2, cv2.LINE_AA)
 
-    axes[1].imshow(colored_heatmap_rgb)
-    axes[1].set_title("Grad-CAM Heatmap\n(Red = High Influence)", fontsize=13, fontweight="bold")
-    axes[1].axis("off")
-
-    axes[2].imshow(superimposed_rgb)
-    axes[2].set_title(f"Overlay: {label}\nConfidence: {confidence * 100:.1f}%",
-                      fontsize=13, fontweight="bold", color=color)
-    axes[2].axis("off")
-
-    plt.suptitle(
-        f"AI Diagnosis: {label} | Confidence: {confidence * 100:.2f}%",
-        fontsize=16, fontweight="bold", y=0.98, color=color
-    )
-    plt.tight_layout()
-
-    # Convert plot to base64 PNG
-    buf = io.BytesIO()
-    plt.savefig(buf, format="png", dpi=150, bbox_inches="tight")
-    plt.close(fig)
-    buf.seek(0)
-    b64_string = base64.b64encode(buf.read()).decode("utf-8")
-    buf.close()
+    # Encode to base64
+    _, buffer = cv2.imencode('.png', final_img)
+    b64_string = base64.b64encode(buffer).decode("utf-8")
 
     return b64_string

@@ -1,6 +1,6 @@
 """
 main.py - FastAPI Backend Server
-Pituitary Tumor Detection + Grad-CAM API
+Brain Tumor MRI Scanner API (Pituitary + Glioma + Grad-CAM)
 
 Endpoints:
   GET  /         -> Welcome message
@@ -22,20 +22,20 @@ import predictor
 
 
 # -----------------------------------------------------------
-# Lifespan: Load model once at server startup
+# Lifespan: Load models once at server startup
 # -----------------------------------------------------------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Load model when server starts, cleanup when server stops."""
+    """Load all models when server starts, cleanup when server stops."""
     print("=" * 60)
-    print("  Pituitary Tumor Detection API - Starting...")
+    print("  Brain Tumor MRI Scanner API - Starting...")
     print("=" * 60)
     try:
         predictor.load_model()
         print("  Server is READY to accept requests!")
         print("=" * 60)
     except Exception as e:
-        print(f"  FATAL: Could not load model: {e}")
+        print(f"  FATAL: Could not load models: {e}")
         print("=" * 60)
     yield
     print("Server shutting down...")
@@ -45,9 +45,9 @@ async def lifespan(app: FastAPI):
 # FastAPI App
 # -----------------------------------------------------------
 app = FastAPI(
-    title="Pituitary Tumor Detection API",
-    description="AI-powered MRI analysis with Grad-CAM explainability",
-    version="1.0.0",
+    title="Brain Tumor MRI Scanner API",
+    description="AI-powered MRI analysis with unified Pituitary & Glioma detection + Grad-CAM explainability",
+    version="2.0.0",
     lifespan=lifespan
 )
 
@@ -71,10 +71,11 @@ app.add_middleware(
 async def root():
     """Welcome endpoint."""
     return {
-        "message": "Pituitary Tumor Detection API",
-        "version": "1.0.0",
+        "message": "Brain Tumor MRI Scanner API",
+        "version": "2.0.0",
+        "supported_tumors": ["Pituitary Tumor", "Glioma Tumor"],
         "endpoints": {
-            "POST /predict": "Upload MRI image for tumor detection + Grad-CAM",
+            "POST /predict": "Upload MRI image for unified tumor detection + Grad-CAM",
             "GET /health": "Check model and server status"
         }
     }
@@ -82,14 +83,16 @@ async def root():
 
 @app.get("/health")
 async def health_check():
-    """Check if the model is loaded and server is healthy."""
-    model_loaded = predictor._model is not None
-    gradcam_ready = predictor._gradcam_model is not None
+    """Check if models are loaded and server is healthy."""
+    pituitary_loaded = predictor._pituitary_model is not None
+    glioma_loaded = predictor._glioma_model is not None
+    any_loaded = pituitary_loaded or glioma_loaded
     return {
-        "status": "healthy" if model_loaded else "model_not_loaded",
-        "model_loaded": model_loaded,
-        "gradcam_ready": gradcam_ready,
-        "model_path": str(predictor.MODEL_PATH)
+        "status": "healthy" if any_loaded else "no_models_loaded",
+        "pituitary_model_loaded": pituitary_loaded,
+        "glioma_model_loaded": glioma_loaded,
+        "pituitary_gradcam_ready": predictor._pituitary_gradcam is not None,
+        "glioma_gradcam_ready": predictor._glioma_gradcam is not None,
     }
 
 
@@ -97,7 +100,7 @@ async def health_check():
 async def predict_tumor(file: UploadFile = File(...)):
     """
     Upload an MRI image and receive:
-      - prediction: "Pituitary Tumor" or "No Tumor"
+      - prediction: "Pituitary Tumor", "Glioma Tumor", or "No Tumor"
       - confidence: float (0.0 to 1.0)
       - confidence_percent: string e.g. "94.20%"
       - gradcam_image: base64-encoded PNG (3-panel visualization)
@@ -119,7 +122,7 @@ async def predict_tumor(file: UploadFile = File(...)):
     if len(image_bytes) == 0:
         raise HTTPException(status_code=400, detail="Uploaded file is empty.")
 
-    # Run prediction + Grad-CAM
+    # Run unified prediction + Grad-CAM
     try:
         result = predictor.predict(image_bytes)
     except ValueError as e:
@@ -133,8 +136,8 @@ async def predict_tumor(file: UploadFile = File(...)):
 
 
 # -----------------------------------------------------------
-# Run with: uvicorn main:app --reload --host 0.0.0.0 --port 8000
+# Run with: python backend/main.py
 # -----------------------------------------------------------
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=False)
+    uvicorn.run(app, host="0.0.0.0", port=8000)
